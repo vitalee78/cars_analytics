@@ -2,9 +2,10 @@
 from typing import List, Dict, Tuple
 import pandas as pd
 from sqlalchemy import select, func
+from datetime import datetime, timezone
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from scripts.cars_analytics.orm.database import get_session
-from scripts.cars_analytics.orm.models import BrandRaw
+from scripts.cars_analytics.orm.models import BrandRaw, AuctionCarRaw
 from scripts.cars_analytics.orm.models import ModelRaw
 from scripts.cars_analytics.orm.models import CarbodyRaw
 from scripts.cars_analytics.orm.models import CarRaw
@@ -44,7 +45,6 @@ def _bulk_upsert_models(brand_model_pairs: List[Tuple[int, str]]) -> Dict[Tuple[
         result = session.execute(
             select(ModelRaw.id_brand, ModelRaw.model, ModelRaw.id_model)
         )
-        # Загружаем весь справочник — он небольшой
         mapping = {}
         for row in result:
             mapping[(row.id_brand, row.model)] = row.id_model
@@ -134,6 +134,154 @@ def bulk_upsert_cars(df: pd.DataFrame) -> int:
             "link_source": stmt.excluded.link_source,
             "equipment": stmt.excluded.equipment,
             "rate": stmt.excluded.rate,
+            "updated_at": func.now(),
+        }
+    )
+
+    with get_session() as session:
+        result = session.execute(stmt)
+        session.commit()
+        return result.rowcount
+
+
+# def _resolve_brand_ids(brand_names: List[str]) -> Dict[str, int]:
+#     """Возвращает {brand: id_brand} только для существующих брендов. Падает, если бренд не найден."""
+#     if not brand_names:
+#         return {}
+#     unique_brands = list(set(brand_names))
+#     with get_session() as session:
+#         result = session.execute(
+#             select(BrandRaw.brand, BrandRaw.id_brand).where(BrandRaw.brand.in_(unique_brands))
+#         )
+#         mapping = {row.brand: row.id_brand for row in result}
+#
+#     # Валидация: все бренды должны существовать
+#     missing = set(unique_brands) - set(mapping.keys())
+#     if missing:
+#         raise ValueError(f"Brands not found in reference: {sorted(missing)}. Load them first via ReferenceLoader.")
+#
+#     return mapping
+#
+#
+# def _resolve_model_ids(brand_model_pairs: List[Tuple[int, str]]) -> Dict[Tuple[int, str], int]:
+#     """Возвращает {(id_brand, model): id_model} только для существующих моделей."""
+#     if not brand_model_pairs:
+#         return {}
+#     unique_pairs = list(set(brand_model_pairs))
+#     with get_session() as session:
+#         result = session.execute(
+#             select(ModelRaw.id_brand, ModelRaw.model, ModelRaw.id_model)
+#             .where(
+#                 (ModelRaw.id_brand.in_([p[0] for p in unique_pairs])) &
+#                 (ModelRaw.model.in_([p[1] for p in unique_pairs]))
+#             )
+#         )
+#         mapping = {(row.id_brand, row.model): row.id_model for row in result}
+#
+#     # Валидация
+#     missing = [pair for pair in unique_pairs if pair not in mapping]
+#     if missing:
+#         raise ValueError(f"Models not found in reference: {missing}. Load them first via ReferenceLoader.")
+#
+#     return mapping
+#
+#
+# def _resolve_carbody_ids(model_carbody_pairs: List[Tuple[int, str]]) -> Dict[Tuple[int, str], int]:
+#     """Возвращает {(id_model, carbody): id_carbody} только для существующих кузовов."""
+#     if not model_carbody_pairs:
+#         return {}
+#     unique_pairs = list(set(model_carbody_pairs))
+#     # Фильтруем пустые кузова — они допустимы
+#     non_empty_pairs = [(m, c) for m, c in unique_pairs if c]
+#
+#     mapping: Dict[Tuple[int, str], int] = {}
+#     if non_empty_pairs:
+#         with get_session() as session:
+#             result = session.execute(
+#                 select(CarbodyRaw.id_model, CarbodyRaw.carbody, CarbodyRaw.id_carbody)
+#                 .where(
+#                     (CarbodyRaw.id_model.in_([p[0] for p in non_empty_pairs])) &
+#                     (CarbodyRaw.carbody.in_([p[1] for p in non_empty_pairs]))
+#                 )
+#             )
+#             mapping = {(row.id_model, row.carbody): row.id_carbody for row in result}
+#
+#     # Валидация только для непустых кузовов
+#     missing = [(m, c) for m, c in non_empty_pairs if (m, c) not in mapping]
+#     if missing:
+#         raise ValueError(f"Carbodies not found in reference: {missing}. Load them first via ReferenceLoader.")
+#
+#     # Пустые кузова → None
+#     for m, c in unique_pairs:
+#         if not c:
+#             mapping[(m, c)] = None
+#
+#     return mapping
+
+
+def bulk_upsert_auctions(df: pd.DataFrame) -> int:
+    """
+       Bulk upsert записей в raw.auction_cars_raw.
+       """
+    if df.empty:
+        return 0
+
+    df = df.copy()
+    df["brand"] = df["brand"].astype(str)
+    df["model"] = df["model"].astype(str)
+    df["carbody"] = df["carbody"].fillna("").astype(str)
+
+    # 1. Upsert брендов
+    brand_to_id = _bulk_upsert_brands(df["brand"].unique().tolist())
+
+    # 2. Upsert моделей
+    brand_model_pairs = [
+        (brand_to_id[row["brand"]], row["model"]) for _, row in df.iterrows()
+    ]
+    model_to_id = _bulk_upsert_models(brand_model_pairs)
+
+    # 3. Upsert кузовов
+    model_carbody_pairs = [
+        (model_to_id[(brand_to_id[row["brand"]], row["model"])], row["carbody"])
+        for _, row in df.iterrows()
+    ]
+    carbody_to_id = _bulk_upsert_carbodies(model_carbody_pairs)
+
+    # 2. Формируем записи для вставки
+    now = datetime.now(timezone.utc)
+    records: List[dict] = []
+    for _, row in df.iterrows():
+        brand_id = brand_to_id[row["brand"]]
+        model_id = model_to_id[(brand_id, row["model"])]
+        carbody_id = carbody_to_id.get((model_id, row["carbody"]))
+
+        records.append({
+            "id_car": int(row["id_car"]),
+            "id_brand": brand_id,
+            "id_model": model_id,
+            "id_carbody": carbody_id,
+            "year_release": int(row["year"]),
+            "mileage": int(row.get("mileage", 0)),
+            "final_price": row.get("final_price"),
+            "source_lot_id": str(row["source_lot_id"]),
+            "link_source": row.get("link_source"),
+            "auction_date": row["lot_date"],
+            "rate": row.get("rate"),
+            "equipment": row.get("equipment"),
+            "created_at": now,
+            "updated_at": now,
+        })
+
+    # 3. Upsert в основную таблицу
+    stmt = pg_insert(AuctionCarRaw).values(records)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["id_car"],
+        set_={
+            "mileage": stmt.excluded.mileage,
+            "link_source": stmt.excluded.link_source,
+            "equipment": stmt.excluded.equipment,
+            "rate": stmt.excluded.rate,
+            "final_price": stmt.excluded.final_price,
             "updated_at": func.now(),
         }
     )
