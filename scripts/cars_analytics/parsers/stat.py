@@ -16,14 +16,15 @@ logger = logging.getLogger(__name__)
 
 class ParserCars(BaseParser):
     def __init__(self,
+                 airflow_mode: bool = True,
                  brand_models: list = None,
                  option_cars_list: list = None,
                  batch_size: int = 20,
                  min_year: int = 2016
                  ):
+        self.airflow_mode = airflow_mode
         self.MIN_YEAR = min_year
         self.BATCH_SIZE = batch_size
-        # self.airflow_mode = airflow_mode
         self.brand_models = brand_models if brand_models is not None else ["honda/vezel", "mazda/cx-30"]
         self.option_cars_list = option_cars_list if option_cars_list is not None else ["year-from=2016&year-to=2016",
                                                                                        "year-from=2016&year-to=2016"]
@@ -144,7 +145,7 @@ class ParserCars(BaseParser):
 
                             if len(batch) >= self.BATCH_SIZE:
                                 df_batch = pd.DataFrame(batch)
-                                bulk_upsert_cars(df_batch)
+                                bulk_upsert_cars(df_batch, airflow_mode=self.airflow_mode)
                                 batch = []
 
                         except Exception as e:
@@ -158,7 +159,7 @@ class ParserCars(BaseParser):
             # Сохраняем остаток батча
             if batch:
                 df_batch = pd.DataFrame(batch)
-                bulk_upsert_cars(df_batch)
+                bulk_upsert_cars(df_batch, airflow_mode=self.airflow_mode)
 
             logger.info(
                 f"Завершён парсинг для {brand_model}. Найдено лотов: {len(batch) + (total_parsed - len(batch))}")
@@ -262,5 +263,5 @@ class ParserCars(BaseParser):
 
 
 if __name__ == '__main__':
-    parser = ParserCars()
+    parser = ParserCars(airflow_mode=False)
     parser.parse_tokidoki_and_save()

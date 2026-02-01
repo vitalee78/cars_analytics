@@ -8,6 +8,8 @@
 .env
 .tests/
 .logs/
+docker-compose.yaml
+
 
 # User-specific stuff
 .idea/**/workspace.xml

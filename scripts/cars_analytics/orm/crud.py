@@ -11,25 +11,26 @@ from scripts.cars_analytics.orm.models import CarbodyRaw
 from scripts.cars_analytics.orm.models import CarRaw
 
 
-def _bulk_upsert_brands(brand_names: List[str]) -> Dict[str, int]:
+def _bulk_upsert_brands(brand_names: List[str], airflow_mode: bool = False) -> Dict[str, int]:
     """Возвращает {brand: id_brand}"""
     if not brand_names:
         return {}
     unique_brands = list(set(brand_names))
     stmt = pg_insert(BrandRaw).values([{"brand": name} for name in unique_brands])
     stmt = stmt.on_conflict_do_nothing(index_elements=["brand"])
-    with get_session() as session:
+    with get_session(airflow_mode=airflow_mode) as session:
         session.execute(stmt)
         session.commit()
 
-    with get_session() as session:
+    with get_session(airflow_mode=airflow_mode) as session:
         result = session.execute(
             select(BrandRaw.brand, BrandRaw.id_brand).where(BrandRaw.brand.in_(unique_brands))
         )
         return {row.brand: row.id_brand for row in result}
 
 
-def _bulk_upsert_models(brand_model_pairs: List[Tuple[int, str]]) -> Dict[Tuple[int, str], int]:
+def _bulk_upsert_models(brand_model_pairs: List[Tuple[int, str]], airflow_mode: bool = False) -> Dict[
+    Tuple[int, str], int]:
     """Возвращает {(id_brand, model): id_model}"""
     if not brand_model_pairs:
         return {}
@@ -37,11 +38,11 @@ def _bulk_upsert_models(brand_model_pairs: List[Tuple[int, str]]) -> Dict[Tuple[
     records = [{"id_brand": b, "model": m} for b, m in unique_pairs]
     stmt = pg_insert(ModelRaw).values(records)
     stmt = stmt.on_conflict_do_nothing(index_elements=["id_brand", "model"])
-    with get_session() as session:
+    with get_session(airflow_mode=airflow_mode) as session:
         session.execute(stmt)
         session.commit()
 
-    with get_session() as session:
+    with get_session(airflow_mode=airflow_mode) as session:
         result = session.execute(
             select(ModelRaw.id_brand, ModelRaw.model, ModelRaw.id_model)
         )
@@ -52,7 +53,8 @@ def _bulk_upsert_models(brand_model_pairs: List[Tuple[int, str]]) -> Dict[Tuple[
         return {pair: mapping[pair] for pair in unique_pairs if pair in mapping}
 
 
-def _bulk_upsert_carbodies(model_carbody_pairs: List[Tuple[int, str]]) -> Dict[Tuple[int, str], int]:
+def _bulk_upsert_carbodies(model_carbody_pairs: List[Tuple[int, str]], airflow_mode: bool = False) -> Dict[
+    Tuple[int, str], int]:
     """Возвращает {(id_model, carbody): id_carbody}"""
     if not model_carbody_pairs:
         return {}
@@ -61,11 +63,11 @@ def _bulk_upsert_carbodies(model_carbody_pairs: List[Tuple[int, str]]) -> Dict[T
     if records:
         stmt = pg_insert(CarbodyRaw).values(records)
         stmt = stmt.on_conflict_do_nothing(index_elements=["id_model", "carbody"])
-        with get_session() as session:
+        with get_session(airflow_mode=airflow_mode) as session:
             session.execute(stmt)
             session.commit()
 
-    with get_session() as session:
+    with get_session(airflow_mode=airflow_mode) as session:
         result = session.execute(
             select(CarbodyRaw.id_model, CarbodyRaw.carbody, CarbodyRaw.id_carbody)
         )
@@ -75,7 +77,7 @@ def _bulk_upsert_carbodies(model_carbody_pairs: List[Tuple[int, str]]) -> Dict[T
         return {pair: mapping.get(pair, None) for pair in unique_pairs}
 
 
-def bulk_upsert_cars(df: pd.DataFrame) -> int:
+def bulk_upsert_cars(df: pd.DataFrame, airflow_mode: bool = False) -> int:
     if df.empty:
         return 0
 
@@ -84,23 +86,23 @@ def bulk_upsert_cars(df: pd.DataFrame) -> int:
     df["model"] = df["model"].astype(str)
     df["carbody"] = df["carbody"].fillna("").astype(str)
 
-    # 1. Upsert брендов
-    brand_to_id = _bulk_upsert_brands(df["brand"].unique().tolist())
+    # Upsert брендов
+    brand_to_id = _bulk_upsert_brands(df["brand"].unique().tolist(), airflow_mode=airflow_mode)
 
-    # 2. Upsert моделей
+    # Upsert моделей
     brand_model_pairs = [
         (brand_to_id[row["brand"]], row["model"]) for _, row in df.iterrows()
     ]
-    model_to_id = _bulk_upsert_models(brand_model_pairs)
+    model_to_id = _bulk_upsert_models(brand_model_pairs, airflow_mode=airflow_mode)
 
-    # 3. Upsert кузовов
+    # Upsert кузовов
     model_carbody_pairs = [
         (model_to_id[(brand_to_id[row["brand"]], row["model"])], row["carbody"])
         for _, row in df.iterrows()
     ]
-    carbody_to_id = _bulk_upsert_carbodies(model_carbody_pairs)
+    carbody_to_id = _bulk_upsert_carbodies(model_carbody_pairs, airflow_mode=airflow_mode)
 
-    # 4. Формируем записи для вставки
+    # Формируем записи для вставки
     records: List[dict] = []
     for _, row in df.iterrows():
         brand_id = brand_to_id[row["brand"]]
@@ -125,7 +127,7 @@ def bulk_upsert_cars(df: pd.DataFrame) -> int:
             "equipment": row.get("equipment"),
         })
 
-    # 5. Upsert в основную таблицу
+    # Upsert в основную таблицу
     stmt = pg_insert(CarRaw).values(records)
     stmt = stmt.on_conflict_do_update(
         index_elements=["id_car"],
@@ -138,11 +140,10 @@ def bulk_upsert_cars(df: pd.DataFrame) -> int:
         }
     )
 
-    with get_session() as session:
+    with get_session(airflow_mode=airflow_mode) as session:
         result = session.execute(stmt)
         session.commit()
         return result.rowcount
-
 
 # def _resolve_brand_ids(brand_names: List[str]) -> Dict[str, int]:
 #     """Возвращает {brand: id_brand} только для существующих брендов. Падает, если бренд не найден."""
@@ -219,7 +220,7 @@ def bulk_upsert_cars(df: pd.DataFrame) -> int:
 #     return mapping
 
 
-def bulk_upsert_auctions(df: pd.DataFrame) -> int:
+def bulk_upsert_auctions(df: pd.DataFrame, airflow_mode: bool = False) -> int:
     """
        Bulk upsert записей в raw.auction_cars_raw.
        """
@@ -231,23 +232,23 @@ def bulk_upsert_auctions(df: pd.DataFrame) -> int:
     df["model"] = df["model"].astype(str)
     df["carbody"] = df["carbody"].fillna("").astype(str)
 
-    # 1. Upsert брендов
-    brand_to_id = _bulk_upsert_brands(df["brand"].unique().tolist())
+    # Upsert брендов
+    brand_to_id = _bulk_upsert_brands(df["brand"].unique().tolist(), airflow_mode=airflow_mode)
 
-    # 2. Upsert моделей
+    # Upsert моделей
     brand_model_pairs = [
         (brand_to_id[row["brand"]], row["model"]) for _, row in df.iterrows()
     ]
-    model_to_id = _bulk_upsert_models(brand_model_pairs)
+    model_to_id = _bulk_upsert_models(brand_model_pairs, airflow_mode=airflow_mode)
 
-    # 3. Upsert кузовов
+    # Upsert кузовов
     model_carbody_pairs = [
         (model_to_id[(brand_to_id[row["brand"]], row["model"])], row["carbody"])
         for _, row in df.iterrows()
     ]
-    carbody_to_id = _bulk_upsert_carbodies(model_carbody_pairs)
+    carbody_to_id = _bulk_upsert_carbodies(model_carbody_pairs, airflow_mode=airflow_mode)
 
-    # 2. Формируем записи для вставки
+    # Формируем записи для вставки
     now = datetime.now(timezone.utc)
     records: List[dict] = []
     for _, row in df.iterrows():
@@ -272,7 +273,7 @@ def bulk_upsert_auctions(df: pd.DataFrame) -> int:
             "updated_at": now,
         })
 
-    # 3. Upsert в основную таблицу
+    # Upsert в основную таблицу
     stmt = pg_insert(AuctionCarRaw).values(records)
     stmt = stmt.on_conflict_do_update(
         index_elements=["id_car"],
@@ -286,7 +287,7 @@ def bulk_upsert_auctions(df: pd.DataFrame) -> int:
         }
     )
 
-    with get_session() as session:
+    with get_session(airflow_mode=airflow_mode) as session:
         result = session.execute(stmt)
         session.commit()
         return result.rowcount
