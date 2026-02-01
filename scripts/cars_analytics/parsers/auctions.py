@@ -1,0 +1,273 @@
+import logging
+import re
+from datetime import datetime
+from random import uniform
+from time import sleep
+from typing import Tuple
+
+import pandas as pd
+
+from scripts.cars_analytics.common.base_parser import BaseParser
+from scripts.cars_analytics.common.parser_utils import get_field_util, should_skip_by_year, clean_equipment
+from scripts.cars_analytics.orm.crud import bulk_upsert_auctions
+
+logger = logging.getLogger(__name__)
+
+
+class ParserAuctions(BaseParser):
+    def __init__(self,
+                 airflow_mode: bool = True,
+                 brand_models: list = None,
+                 option_cars_list: list = None,
+                 batch_size: int = 20,
+                 min_year: int = 2014):
+        self.MIN_YEAR = min_year
+        self.BATCH_SIZE = batch_size
+        self.airflow_mode = airflow_mode
+        self.BASE_URL = "https://tokidoki.su"
+        self.HEADERS = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+        }
+
+        # Поддержка списков
+        self.brand_models = brand_models or ["honda/vezel"]
+        self.option_cars_list = option_cars_list or ["year-from=2013"]
+
+        if len(self.brand_models) != len(self.option_cars_list):
+            raise ValueError("brand_models и option_cars_list должны иметь одинаковую длину")
+
+    def get_pagination_from_url(self, base_section_url: str) -> int:
+        """Получает максимальный номер страницы из пагинации на первой странице"""
+        try:
+            soup = self.get_bs4_from_url(base_section_url)
+            pagination_ul = soup.find("ul", class_="pagination")
+
+            if not pagination_ul:
+                return 1
+
+            max_page = 1
+            for link in pagination_ul.find_all("a", href=True):
+                href = link["href"]
+                match = re.search(r'/page-(\d+)/', href)
+                if match:
+                    page_num = int(match.group(1))
+                    max_page = max(max_page, page_num)
+            return max_page
+        except Exception as e:
+            logger.warning(f"Не удалось определить пагинацию, используем 1 страницу: {e}")
+            return 1
+
+    def parse_auctions_and_save(self):
+        total_parsed = 0
+        results = []
+
+        for brand_model, option_cars in zip(self.brand_models, self.option_cars_list):
+            logger.info(f"Начинаем парсинг аукционов для: {brand_model} с опциями: {option_cars}")
+            section_path = f"/auc/{brand_model}/?{option_cars}"
+            base_url = self.BASE_URL + section_path
+
+            soup, should_stop, result = self.check_first_page_and_get_soup(base_url)
+            if should_stop:
+                logger.warning(f"Пропускаем {brand_model}: {result}")
+                continue
+
+            total_pages = self.get_pagination_from_url(base_url)
+            batch = []
+            parsed_for_brand = 0
+
+            for page in range(1, total_pages + 1):
+                sleep(uniform(0.5, 2.0))
+
+                if page == 1:
+                    url = base_url
+                else:
+                    if '?' in section_path:
+                        path_part, params_part = section_path.split('?', 1)
+                        url = f"{self.BASE_URL.strip()}{path_part.rstrip('/')}/page-{page}/?{params_part}"
+                    else:
+                        url = f"{self.BASE_URL.strip()}{section_path.rstrip('/')}/page-{page}/"
+
+                logger.info(f"Парсинг аукционов {brand_model}, страница {page}/{total_pages}: {url}")
+
+                try:
+                    soup = self.get_bs4_from_url(url)
+                    articles = soup.find_all('article', class_='lot-teaser')
+
+                    if not articles:
+                        logger.warning(f"На странице {page} не найдено лотов для {brand_model}")
+                        continue
+
+                    for article in articles:
+                        try:
+                            parsed = self.parse_info(article)
+                            if not parsed or 'brand' not in parsed:
+                                continue
+
+                            title_elem = parsed.get('brand') + ' ' + parsed.get('model')
+                            if should_skip_by_year(parsed.get('year'), self.MIN_YEAR, title_elem):
+                                continue
+
+                            lot_id, lot_date = self.pars_info_lot(article)
+                            if not lot_id:
+                                continue
+
+                            parsed['source_lot_id'] = lot_id
+                            try:
+                                parsed['lot_date'] = datetime.strptime(lot_date, '%d.%m.%Y').date()
+                            except ValueError:
+                                parsed['lot_date'] = None
+
+                            a_tag = article.find('a', href=True)
+                            if not a_tag:
+                                logger.error("Не найден тег <a> с href в статье.")
+                                continue
+
+                            href = a_tag['href']
+                            parsed['link_source'] = self.BASE_URL.strip() + href
+                            id_car = get_field_util(r'/(\d+)/?$', href, cast=int)
+                            if id_car is None:
+                                logger.error(f"Не удалось извлечь id_car из href: {href}")
+                                continue
+
+                            parsed['id_car'] = id_car
+
+                            batch.append(parsed)
+                            parsed_for_brand += 1
+                            total_parsed += 1
+
+                            if len(batch) >= self.BATCH_SIZE:
+                                df_batch = pd.DataFrame(batch)
+                                bulk_upsert_auctions(df_batch)
+                                batch = []
+
+                        except Exception as e:
+                            logger.error(f"Ошибка при обработке лота: {e}")
+                            continue
+
+                except Exception as e:
+                    logger.error(f"Ошибка на странице {page} для {brand_model}: {e}")
+                    continue
+
+            # Сохраняем остаток батча
+            if batch:
+                df_batch = pd.DataFrame(batch)
+                bulk_upsert_auctions(df_batch)
+
+            results.append({
+                "brand_model": brand_model,
+                "option_cars": option_cars,
+                "lots_count": parsed_for_brand
+            })
+            logger.info(f"Завершён парсинг аукционов для {brand_model}. Найдено лотов: {parsed_for_brand}")
+
+        logger.info(f"Парсинг аукционов завершён. Всего сохранено лотов: {total_parsed}")
+        return {
+            "total_lots": total_parsed,
+            "status": "success",
+            "details": results
+        }
+
+    def parse_info(self, article) -> dict:
+        info_div = article.find("div", class_="lot-teaser__info")
+        if not info_div:
+            return {}
+
+        data = {}
+        title_elem = info_div.find("div", class_='lot-teaser__info__title')
+        if not title_elem:
+            return {}
+
+        info_title = title_elem.get_text(strip=True)
+        parts = info_title.split(maxsplit=1)
+        if len(parts) < 2:
+            return {}
+        data['brand'] = parts[0].capitalize()
+        data['model'] = parts[1].upper()
+
+        info_sub_title_elem = info_div.find('div', class_='lot-teaser__info__sub-title')
+        if info_sub_title_elem:
+            raw_text = info_sub_title_elem.get_text(strip=True)
+            data['equipment'] = clean_equipment(raw_text)
+        else:
+            data['equipment'] = None
+
+        info_list = info_div.find("div", class_='lot-teaser__info__list')
+        if not info_list:
+            return data
+
+        for li in info_list.select('li'):
+            text = li.get_text(strip=True)
+            if ':' not in text:
+                continue
+            key, value = text.split(':', 1)
+            key = key.strip()
+            value = value.strip()
+
+            if key == "Кузов":
+                data['carbody'] = str(value)
+            elif key == "Пробег":
+                try:
+                    data['mileage'] = int(value.replace(' ', ''))
+                except ValueError:
+                    pass
+            elif key in ["Обьем", "Объем", "Объём"]:
+                try:
+                    vol = re.sub(r'[^\d]', '', value)
+                    if vol:
+                        data['engine_volume'] = int(vol)
+                except (ValueError, TypeError):
+                    pass
+            elif key == "Год":
+                try:
+                    data['year'] = int(value)
+                except ValueError:
+                    pass
+            elif key == "Оценка":
+                try:
+                    data['rate'] = str(value.replace(',', '.'))
+                except ValueError:
+                    pass
+
+        return data
+
+    def pars_info_lot(self, article) -> Tuple[str, str]:
+        lot_div = article.find("div", class_="lot-teaser__lot")
+        if not lot_div:
+            logger.error("Не найден блок с информацией о лоте")
+            return "", ""
+
+        lines = [s.strip() for s in lot_div.stripped_strings]
+
+        lot_number = ""
+        lot_date = ""
+
+        for line in lines:
+            if line.startswith("Лот "):
+                match = re.search(r'Лот\s+(\d+)', line)
+                if match:
+                    lot_number = match.group(1)
+
+        if lines and re.fullmatch(r'\d{2}\.\d{2}\.\d{4}', lines[-1]):
+            lot_date = lines[-1]
+
+        return lot_number, lot_date
+
+    def get_field(self, pattern, text, cast=str):
+        return get_field_util(pattern, text, cast)
+
+
+if __name__ == '__main__':
+    # Для локального запуска
+    parser = ParserAuctions(
+        brand_models=["honda/vezel", "mazda/cx-30"],
+        option_cars_list=[
+            "",
+            ""
+        ]
+    )
+    result = parser.parse_auctions_and_save()
+    print(result)
