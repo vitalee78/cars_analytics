@@ -5,6 +5,7 @@ import pendulum
 from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.python import PythonOperator
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 from scripts.cars_analytics.common.telegram_alerts import build_failure_message, send_telegram_message, \
     build_success_message
@@ -13,14 +14,17 @@ from scripts.cars_analytics.parsers.auctions import ParserAuctions
 local_tz = pendulum.timezone("Asia/Novosibirsk")
 
 
-def _run_parsing_auction(**context):
+def _run_parsing_auction():
     brand_models = Variable.get("parser.auction.brand_model", deserialize_json=True)
     option_cars_list = Variable.get("parser.auction.filters.options", deserialize_json=True)
     batch_size = int(Variable.get("parser.batch_size", default_var=20))
     min_year = int(Variable.get("parser.min_year", default_var=2014))
 
+    hook = PostgresHook(postgres_conn_id="japan_cars_db")
+    engine = hook.get_sqlalchemy_engine()
+
     parser = ParserAuctions(
-        airflow_mode=True,
+        airflow_mode=engine,
         brand_models=brand_models,
         option_cars_list=option_cars_list,
         batch_size=batch_size,

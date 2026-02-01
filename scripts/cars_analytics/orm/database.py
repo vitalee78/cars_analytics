@@ -7,7 +7,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# Единственный вызов load_dotenv() в проекте
 load_dotenv()
 
 Base = declarative_base()
