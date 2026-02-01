@@ -141,7 +141,7 @@ class ParserAuctions(BaseParser):
 
                             if len(batch) >= self.BATCH_SIZE:
                                 df_batch = pd.DataFrame(batch)
-                                bulk_upsert_auctions(df_batch)
+                                bulk_upsert_auctions(df_batch, airflow_mode=self.airflow_mode)
                                 batch = []
 
                         except Exception as e:
@@ -155,7 +155,7 @@ class ParserAuctions(BaseParser):
             # Сохраняем остаток батча
             if batch:
                 df_batch = pd.DataFrame(batch)
-                bulk_upsert_auctions(df_batch)
+                bulk_upsert_auctions(df_batch, airflow_mode=self.airflow_mode)
 
             results.append({
                 "brand_model": brand_model,
@@ -263,6 +263,7 @@ class ParserAuctions(BaseParser):
 if __name__ == '__main__':
     # Для локального запуска
     parser = ParserAuctions(
+        airflow_mode=False,
         brand_models=["honda/vezel", "mazda/cx-30"],
         option_cars_list=[
             "",

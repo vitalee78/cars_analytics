@@ -12,8 +12,9 @@ load_dotenv()
 
 Base = declarative_base()
 
+DB_NAME_AIRFLOW = "japan_cars_db"
 
-def get_engine(airflow_mode: bool = False, conn_id: str = "japan_cars_db") -> Engine:
+def get_engine(airflow_mode: bool = False, conn_id: str = DB_NAME_AIRFLOW) -> Engine:
     """
     Создаёт engine для подключения к БД.
 
@@ -59,7 +60,7 @@ def get_engine(airflow_mode: bool = False, conn_id: str = "japan_cars_db") -> En
 
 
 @contextmanager
-def get_session(airflow_mode: bool = False, conn_id: str = "cars_db"):
+def get_session(airflow_mode: bool = False, conn_id: str = DB_NAME_AIRFLOW):
     """
     Context manager для работы с сессией БД.
 

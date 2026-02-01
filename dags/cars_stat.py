@@ -6,14 +6,15 @@ from airflow.models import Variable
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
-from scripts.cars_analytics.common.telegram_alerts import send_telegram_message, build_failure_message, build_success_message
+from scripts.cars_analytics.common.telegram_alerts import send_telegram_message, build_failure_message, \
+    build_success_message
 from scripts.cars_analytics.parsers.stat import ParserCars
 
 local_tz = pendulum.timezone("Asia/Novosibirsk")
 
 
 def _run_parsing_lots():
-    brand_models = Variable.get("parser.stat.brand_model", deserialize_json=True)
+    brand_models = Variable.get("parser.stat.brand_model", default_var=[], deserialize_json=True)
     option_cars_list = Variable.get("parser.stat.filters.options", deserialize_json=True)
     batch_size = int(Variable.get("parser.batch_size", default_var=20))
     min_year = int(Variable.get("parser.min_year", default_var=2010))
@@ -24,11 +25,11 @@ def _run_parsing_lots():
     if len(brand_models) != len(option_cars_list):
         raise ValueError("Списки brand_models и option_cars_list должны быть одинаковой длины")
 
-    # Сохранение в свою БД
     hook = PostgresHook(postgres_conn_id="japan_cars_db")
     engine = hook.get_sqlalchemy_engine()
 
     parser = ParserCars(
+        airflow_mode=engine,
         brand_models=brand_models,
         option_cars_list=option_cars_list,
         batch_size=batch_size,
@@ -66,7 +67,7 @@ def _on_success_callback(context):
 
 with DAG(
         'japan_cars_lots',
-        start_date=datetime(2025, 10, 9, tzinfo=local_tz),
+        start_date=datetime(2026, 1, 30, tzinfo=local_tz),
         schedule_interval='0 3 * * *',
         catchup=False,
         tags=['japan', 'cars', 'lots'],

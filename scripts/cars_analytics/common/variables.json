@@ -1,0 +1,8 @@
+{
+  "parser.auction.brand_model": ["honda/vezel", "mazda/cx-30"],
+  "parser.auction.filters.options": [" ", " "],
+  "parser.batch_size": 50,
+  "parser.min_year": 2014,
+  "parser.stat.brand_model": ["honda/vezel", "mazda/cx-30"],
+  "parser.stat.filters.options": "rate-3=3&rate-3-5=3.5&rate-4=4&rate-4-5=4.5&rate-5=5&year-from=2016"
+}
