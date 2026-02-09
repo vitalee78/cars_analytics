@@ -274,7 +274,6 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
 .venv
 env/
 venv/
@@ -318,7 +317,6 @@ cython_debug/
 poetry.toml
 
 
-
 # ruff
 .ruff_cache/
 
@@ -333,7 +331,6 @@ pyrightconfig.json
 [Ll]ib
 [Ll]ib64
 [Ll]ocal
-[Ss]cripts
 pyvenv.cfg
 pip-selfcheck.json
 
