@@ -75,7 +75,7 @@ class ParserCars(BaseParser):
             total_pages = self.get_pagination_from_url(base_url)
             batch = []
 
-            for page in range(1, total_pages + 1)[:1]:
+            for page in range(1, total_pages + 1)[:10]:
                 sleep(uniform(0.5, 2.0))
 
                 if page == 1:

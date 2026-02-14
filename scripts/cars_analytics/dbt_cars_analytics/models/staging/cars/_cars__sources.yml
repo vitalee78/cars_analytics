@@ -1,0 +1,11 @@
+sources:
+  - name: cars_src
+    #database: dwh_cars -- можно не указывать, название указано в profiles.yml
+    #schema: cars_src -- можно явно не указывать, если совподает с -name
+    tables: 
+      - name: models_raw
+      - name: carbodies_raw
+      - name: brands_raw
+      - name: cars_raw
+      - name: auction_cars_raw
+
