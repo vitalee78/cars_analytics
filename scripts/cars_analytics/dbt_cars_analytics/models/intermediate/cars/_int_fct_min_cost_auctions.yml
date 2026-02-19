@@ -1,0 +1,6 @@
+ models:
+  - name: fct_min_cost_auctions
+    description: "Обогащённая таблица фактов с минимальными ценами"
+    docs:
+      show: true
+    access: protected 
