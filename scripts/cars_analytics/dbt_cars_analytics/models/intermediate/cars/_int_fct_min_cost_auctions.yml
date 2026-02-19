@@ -1,6 +1,6 @@
  models:
   - name: fct_min_cost_auctions
-    description: "Обогащённая таблица фактов с минимальными ценами"
+    description: "Обогащённая таблица фактов с минимальными ценами. Год выпуска с 2016-2020"
     docs:
       show: true
     access: protected
@@ -10,4 +10,6 @@
       - name: brand
         tests: [ not_null ]
       - name: rate
+        tests: [ not_null ]
+      - name: price
         tests: [ not_null ]
