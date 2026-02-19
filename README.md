@@ -19,7 +19,7 @@
 
 **Структура проекта**
 
-```aiignore
+```
 cars_analytics/
 ├── dags/                     # DAG'и для Airflow
 │   ├── cars_cleanup_tables.py    # Очистка временных/промежуточных таблиц
