@@ -3,4 +3,11 @@
     description: "Обогащённая таблица фактов с минимальными ценами"
     docs:
       show: true
-    access: protected 
+    access: protected
+    columns:
+      - name: id
+        tests: [ not_null ]
+      - name: brand
+        tests: [ not_null ]
+      - name: rate
+        tests: [ not_null ]
