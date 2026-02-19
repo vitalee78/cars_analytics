@@ -1,6 +1,3 @@
-/*Правила именования структур*/
--- https://docs.getdbt.com/best-practices/how-we-structure/1-guide-overview
-
 {{
     config(
       materialized = 'table'

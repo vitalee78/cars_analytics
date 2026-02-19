@@ -1,11 +1,116 @@
 sources:
   - name: cars_src
+    description: Данные о машинах в Японии
     #database: dwh_cars -- можно не указывать, название указано в profiles.yml
     #schema: cars_src -- можно явно не указывать, если совподает с -name
     tables: 
       - name: models_raw
+        description: Модель автомобиля
+        columns:
+          - name: id_model 
+            description: Индификатор модели (автоикремент)
+          - name: id_brand
+            description: Индификатор модели
+          - name: model 
+            description: Название марки авто
+          - name: created_at
+            description: Дата/время создания записи
       - name: carbodies_raw
+        description: Кузов автомобиля
+        columns:
+          - name: id_carbody 
+            description: Индификатор кузова (автоикремент)
+          - name: id_model
+            description: Индификатор модели
+          - name: carbody 
+            description: Название кузова авто
+          - name: description
+            description: Описение кузова
+          - name: created_at
+            description: Дата/время создания записи
       - name: brands_raw
+        description: Марка автомобиля
+        columns:
+          - name: id_brand 
+            description: Индификатор марки (автоикремент)
+          - name: brand
+            description: Название марки
+          - name: created_at
+            description: Дата/время создания записи
       - name: cars_raw
+        config: 
+          # changed to config in v1.9
+          freshness: # default freshness
+            warn_after: {count: 1, period: day}
+            error_after: {count: 2, period: day}
+            filter: created_at > current_timestamp - INTERVAL '2 days'
+          loaded_at_field: created_at::timestamp
+        description: Статистика проданных автомобилей
+        columns:
+          - name: id_car 
+            description: Индификатор автомобиля из источника
+          - name: id_brand
+            description: Индификатор модели
+          - name: id_model 
+            description: Индификатор кузова авто
+          - name: id_carbody
+            description: Индификатор кузова
+          - name: cost
+            description: Финальная стоимость аукциона (цена во Владивостоке)
+          - name: year_release
+            description: Год выпуска
+          - name: rate
+            description: Аукционная аценка состояния авто
+          - name: mileage
+            description: Пробег
+          - name: transmission
+            description: Корбка передач (не применяется парсингом)
+          - name: drive_type
+            description: Тип двигателя (не применяется парсингом)
+          - name: fuel_type
+            description: Тип топлива (не применяется парсингом)
+          - name: source_lot_id
+            description: Номер аукционного лота (не уникальный, может повторяться на следующих ауционнах)
+          - name: link_source
+            description: Ссылка на карточку лота в источнике 
+          - name: lot_date
+            description: Дата ауциона
+          - name: equipment
+            description: Комплектация автомобиля
+          - name: created_at
+            description: Дата/время создания записи
+          - name: updated_at
+            description: Дата/время обновление записи
+          - name: id
+            description: Сурогатный ключ
       - name: auction_cars_raw
-
+        description: Аукционны автомобилей
+        columns:
+          - name: id_car 
+            description: Индификатор автомобиля из источника
+          - name: id_brand
+            description: Индификатор модели
+          - name: id_model 
+            description: Индификатор кузова авто
+          - name: id_carbody
+            description: Индификатор кузова
+          - name: year_release
+            description: Год выпуска
+          - name: mileage
+            description: Пробег
+          - name: transmission
+            description: Корбка передач (не применяется парсингом)
+          - name: drive_type
+            description: Тип двигателя (не применяется парсингом)
+          - name: fuel_type
+            description: Тип топлива (не применяется парсингом)
+          - name: source_lot_id
+            description: Номер аукционного лота (не уникальный, может повторяться на следующих ауционнах)
+          - name: link_source
+            description: Ссылка на карточку лота в источнике 
+          - name: rate
+            description: Аукционная аценка состояния авто
+          - name: equipment
+            description: Комплектация автомобиля
+          - name: created_at
+            description: Дата/время создания записи
